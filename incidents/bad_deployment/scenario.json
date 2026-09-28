@@ -9,5 +9,5 @@
   "severity": "HIGH",
   "expected_resolution": "Deploy v1.3.1 with the dependency timeout restored to five seconds.",
   "simulator": "simulate.py",
-  "related_deployment": {"service": "order-service", "version": "v1.3.0", "commit_id": "PENDING"}
+  "related_deployment": {"service": "order-service", "version": "v1.3.0", "commit_id": "35e6df3"}
 }
