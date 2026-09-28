@@ -1,39 +1,12 @@
 {
-  "incident_id": "INC-BAD-001",
+  "incident_id": "INC-006",
   "type": "bad_deployment",
-  "affected_service": "AUTO_DETECTED_FROM_DOCKER_COMPOSE",
+  "affected_service": "order-service",
+  "start_time": "2026-09-20T10:03:00Z",
+  "end_time": "2026-09-20T10:18:00Z",
+  "expected_root_cause": "The v1.3.0 deployment introduced a request timeout that was too short for the product-service dependency.",
+  "expected_symptoms": ["The order creation error rate steps up immediately after deployment.", "Product-service timeout errors appear in order-service logs.", "Successful requests return after the v1.3.1 rollback deployment."],
   "severity": "HIGH",
-  "description": "A defective application configuration is deployed to one service. The service starts but produces elevated errors for requests that hit the defective code path.",
-  "trigger": {
-    "mechanism": "env_var_fault_injection_on_restart",
-    "env_name": "INCIDENT_BAD_DEPLOY",
-    "env_value": "1",
-    "duration_seconds": 120
-  },
-  "expected_root_cause": "A defect introduced by the most recent deployment of the affected service.",
-  "expected_symptoms": [
-    "error rate step-change immediately after deployment",
-    "specific endpoint returns errors",
-    "deployment event in deployment_history.json aligns with error onset"
-  ],
-  "expected_evidence": [
-    "backend logs referencing the faulty code path",
-    "prometheus error counter step",
-    "deployment_history.json entry for the service with matching timestamp"
-  ],
-  "expected_resolution": "Roll back to the previous version / remove the injected env var and restart.",
-  "recovery_behavior": "automatic_on_timer_and_on_sigint",
-  "deployment_context": {
-    "previous_version": "v1.3.0",
-    "bad_version": "v1.4.0",
-    "commit_id": "SIMULATED",
-    "note": "See deployments/deployment_history.json. Replace SIMULATED commit ids with real git hashes if the repo has history."
-  },
-  "timeline": [
-    {"t": "T+0s",   "event": "baseline"},
-    {"t": "T+2s",   "event": "bad deployment applied (env + restart)"},
-    {"t": "T+10s",  "event": "error rate rises"},
-    {"t": "T+120s", "event": "rollback"},
-    {"t": "T+130s", "event": "recovery verified"}
-  ]
+  "simulator": "simulate.py",
+  "related_deployment": {"service": "order-service", "version": "v1.3.0", "commit_id": "PENDING"}
 }
