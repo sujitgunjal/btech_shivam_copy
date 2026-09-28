@@ -1,19 +1,11 @@
 {
-  "incident_id": "INC-SVC-001",
+  "incident_id": "INC-002",
   "type": "service_failure",
-  "affected_service": "AUTO_DETECTED_FROM_DOCKER_COMPOSE",
+  "affected_service": "product-service",
+  "start_time": "2026-09-21T10:00:00Z",
+  "end_time": "2026-09-21T10:01:30Z",
+  "expected_root_cause": "The product-service process was unresponsive because its container was paused.",
+  "expected_symptoms": ["order-service returns 503 responses for order creation requests.", "Connection failures to product-service appear in order-service logs.", "Dependency spans for product-service are absent or fail."],
   "severity": "HIGH",
-  "description": "One application service is paused, making it unavailable to callers. Upstream services see connection refused / 502 errors.",
-  "trigger": { "mechanism": "docker_pause_app_container", "duration_seconds": 90, "why_safe": "pause is reversible and preserves all state" },
-  "expected_root_cause": "Target microservice process became unresponsive (container paused).",
-  "expected_symptoms": ["5xx from upstream callers", "connection refused in logs", "failed traces with missing dependency spans"],
-  "expected_evidence": ["docker events pause", "upstream 5xx counter spike", "jaeger missing spans"],
-  "expected_resolution": "Unpause container; health-checks restore traffic.",
-  "recovery_behavior": "automatic_on_timer_and_on_sigint",
-  "timeline": [
-    {"t": "T+0s", "event": "baseline"},
-    {"t": "T+2s", "event": "service paused"},
-    {"t": "T+90s", "event": "service unpaused"},
-    {"t": "T+95s", "event": "recovery verified"}
-  ]
+  "simulator": "simulate.py"
 }

@@ -1,19 +1,11 @@
 {
-  "incident_id": "INC-HL-001",
+  "incident_id": "INC-003",
   "type": "high_latency",
-  "affected_service": "AUTO_DETECTED_FROM_DOCKER_COMPOSE",
+  "affected_service": "order-service",
+  "start_time": "2026-09-21T11:00:00Z",
+  "end_time": "2026-09-21T11:02:00Z",
+  "expected_root_cause": "A 2000 ms network delay was injected into order-service traffic.",
+  "expected_symptoms": ["The order-service p99 response latency increases to approximately two seconds.", "Slow downstream spans are visible in traces.", "Clients may time out before receiving order responses."],
   "severity": "MEDIUM",
-  "description": "Network-level latency is injected into one service container, causing all its responses to be delayed by a configurable amount.",
-  "trigger": { "mechanism": "tc netem delay inside container netns", "default_delay_ms": 2000, "duration_seconds": 90 },
-  "expected_root_cause": "Artificial network delay applied to the service's egress interface.",
-  "expected_symptoms": ["p99 latency jump to ~2s", "client timeouts", "slow traces"],
-  "expected_evidence": ["prometheus http_request_duration_seconds spike", "jaeger span durations"],
-  "expected_resolution": "Remove tc qdisc; latency returns to baseline.",
-  "recovery_behavior": "automatic_on_timer_and_on_sigint",
-  "timeline": [
-    {"t": "T+0s", "event": "baseline"},
-    {"t": "T+2s", "event": "tc netem applied"},
-    {"t": "T+90s", "event": "tc qdisc removed"},
-    {"t": "T+95s", "event": "latency back to baseline"}
-  ]
+  "simulator": "simulate.py"
 }

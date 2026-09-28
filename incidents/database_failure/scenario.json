@@ -1,38 +1,11 @@
 {
-  "incident_id": "INC-DB-001",
+  "incident_id": "INC-001",
   "type": "database_failure",
-  "affected_service": "AUTO_DETECTED_FROM_DOCKER_COMPOSE",
+  "affected_service": "postgres",
+  "start_time": "2026-09-21T09:00:00Z",
+  "end_time": "2026-09-21T09:02:00Z",
+  "expected_root_cause": "PostgreSQL became unavailable after its container was paused.",
+  "expected_symptoms": ["Dependent services return HTTP 500 or 503 responses.", "Database connection errors and OperationalError log messages increase.", "Request latency rises while clients wait for database connections."],
   "severity": "CRITICAL",
-  "description": "The PostgreSQL service backing the application becomes temporarily unreachable. Application pods keep running but every request that needs the DB fails, producing HTTP 5xx responses, elevated error rates, and DB-connection-error log lines.",
-  "trigger": {
-    "mechanism": "docker_pause_postgres_container",
-    "why_safe": "pause freezes the container without stopping it or touching volumes; unpause restores it instantly. No data loss, no volume deletion.",
-    "duration_seconds": 90,
-    "notes": "If compose uses a managed/remote DB, fall back to application-level fault injection via INCIDENT_DB_FAULT_MODE=env."
-  },
-  "expected_root_cause": "PostgreSQL database became unavailable (container paused / connection refused).",
-  "expected_symptoms": [
-    "HTTP 500 / 503 responses from dependent services",
-    "Spike in application error rate",
-    "Request latency increases due to connection timeouts",
-    "Failed traces with DB span errors",
-    "Log lines containing 'connection refused', 'could not connect to server', 'OperationalError', or 'dial tcp ... connect: connection refused'"
-  ],
-  "expected_evidence": [
-    "backend logs: connection refused / OperationalError",
-    "prometheus: http_requests_total{status=~'5..'} spike",
-    "prometheus: app_error_rate increase",
-    "jaeger: failed traces with db.* spans",
-    "docker events: pause/unpause on postgres container"
-  ],
-  "expected_resolution": "Unpause the postgres container; dependent services recover automatically within one health-check interval.",
-  "recovery_behavior": "automatic_on_timer_and_on_sigint",
-  "timeline": [
-    { "t": "T+0s",  "event": "baseline captured" },
-    { "t": "T+2s",  "event": "postgres container paused" },
-    { "t": "T+5s",  "event": "first dependent 5xx observed" },
-    { "t": "T+30s", "event": "error rate sustained high" },
-    { "t": "T+90s", "event": "postgres container unpaused" },
-    { "t": "T+95s", "event": "error rate returns to baseline" }
-  ]
+  "simulator": "simulate.py"
 }
