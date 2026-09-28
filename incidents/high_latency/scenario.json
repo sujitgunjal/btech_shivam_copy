@@ -1,0 +1,19 @@
+{
+  "incident_id": "INC-HL-001",
+  "type": "high_latency",
+  "affected_service": "AUTO_DETECTED_FROM_DOCKER_COMPOSE",
+  "severity": "MEDIUM",
+  "description": "Network-level latency is injected into one service container, causing all its responses to be delayed by a configurable amount.",
+  "trigger": { "mechanism": "tc netem delay inside container netns", "default_delay_ms": 2000, "duration_seconds": 90 },
+  "expected_root_cause": "Artificial network delay applied to the service's egress interface.",
+  "expected_symptoms": ["p99 latency jump to ~2s", "client timeouts", "slow traces"],
+  "expected_evidence": ["prometheus http_request_duration_seconds spike", "jaeger span durations"],
+  "expected_resolution": "Remove tc qdisc; latency returns to baseline.",
+  "recovery_behavior": "automatic_on_timer_and_on_sigint",
+  "timeline": [
+    {"t": "T+0s", "event": "baseline"},
+    {"t": "T+2s", "event": "tc netem applied"},
+    {"t": "T+90s", "event": "tc qdisc removed"},
+    {"t": "T+95s", "event": "latency back to baseline"}
+  ]
+}

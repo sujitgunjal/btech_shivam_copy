@@ -1,0 +1,19 @@
+{
+  "incident_id": "INC-MEM-001",
+  "type": "memory_spike",
+  "affected_service": "AUTO_DETECTED_FROM_DOCKER_COMPOSE",
+  "severity": "HIGH",
+  "description": "A bounded memory allocation runs inside one container, holding memory for the incident duration and releasing it on recovery.",
+  "trigger": { "mechanism": "docker exec python -c alloc", "mb": 200, "duration_seconds": 90 },
+  "expected_root_cause": "Injected memory allocation inside the service container.",
+  "expected_symptoms": ["container memory rises", "possible OOMKill", "latency increase"],
+  "expected_evidence": ["container_memory_working_set_bytes spike", "OOM events if limits exceeded"],
+  "expected_resolution": "Release allocation / container restart if OOMKilled.",
+  "recovery_behavior": "automatic_on_timer_and_on_sigint",
+  "timeline": [
+    {"t": "T+0s", "event": "baseline"},
+    {"t": "T+5s", "event": "allocation started"},
+    {"t": "T+90s", "event": "allocation released"},
+    {"t": "T+95s", "event": "memory back to baseline"}
+  ]
+}

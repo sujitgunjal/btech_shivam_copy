@@ -1,0 +1,19 @@
+{
+  "incident_id": "INC-NET-001",
+  "type": "network_failure",
+  "affected_service": "AUTO_DETECTED_FROM_DOCKER_COMPOSE",
+  "severity": "HIGH",
+  "description": "A temporary packet-drop / DNS-blackhole is applied inside one container's network namespace, causing outbound connection failures while the host network remains untouched.",
+  "trigger": { "mechanism": "tc netem loss + iptables DROP inside container netns", "loss_percent": 100, "duration_seconds": 90 },
+  "expected_root_cause": "Network egress from the target service is blocked inside its own namespace.",
+  "expected_symptoms": ["connection timeouts", "5xx from upstream callers", "failed dependency spans"],
+  "expected_evidence": ["jaeger missing dependency spans", "upstream 5xx", "container logs connection timeout"],
+  "expected_resolution": "Remove qdisc/iptables rules; connectivity restored.",
+  "recovery_behavior": "automatic_on_timer_and_on_sigint",
+  "timeline": [
+    {"t": "T+0s", "event": "baseline"},
+    {"t": "T+2s", "event": "egress blocked"},
+    {"t": "T+90s", "event": "egress restored"},
+    {"t": "T+95s", "event": "recovered"}
+  ]
+}

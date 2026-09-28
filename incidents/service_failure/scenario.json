@@ -1,0 +1,19 @@
+{
+  "incident_id": "INC-SVC-001",
+  "type": "service_failure",
+  "affected_service": "AUTO_DETECTED_FROM_DOCKER_COMPOSE",
+  "severity": "HIGH",
+  "description": "One application service is paused, making it unavailable to callers. Upstream services see connection refused / 502 errors.",
+  "trigger": { "mechanism": "docker_pause_app_container", "duration_seconds": 90, "why_safe": "pause is reversible and preserves all state" },
+  "expected_root_cause": "Target microservice process became unresponsive (container paused).",
+  "expected_symptoms": ["5xx from upstream callers", "connection refused in logs", "failed traces with missing dependency spans"],
+  "expected_evidence": ["docker events pause", "upstream 5xx counter spike", "jaeger missing spans"],
+  "expected_resolution": "Unpause container; health-checks restore traffic.",
+  "recovery_behavior": "automatic_on_timer_and_on_sigint",
+  "timeline": [
+    {"t": "T+0s", "event": "baseline"},
+    {"t": "T+2s", "event": "service paused"},
+    {"t": "T+90s", "event": "service unpaused"},
+    {"t": "T+95s", "event": "recovery verified"}
+  ]
+}

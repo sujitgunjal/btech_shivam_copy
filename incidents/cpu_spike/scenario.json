@@ -1,0 +1,19 @@
+{
+  "incident_id": "INC-CPU-001",
+  "type": "cpu_spike",
+  "affected_service": "AUTO_DETECTED_FROM_DOCKER_COMPOSE",
+  "severity": "MEDIUM",
+  "description": "A bounded CPU-burn process runs inside one service container, driving CPU usage up for the duration of the incident.",
+  "trigger": { "mechanism": "docker exec cpu_burn", "workers": 2, "duration_seconds": 90 },
+  "expected_root_cause": "CPU saturation from an injected workload inside the service container.",
+  "expected_symptoms": ["container CPU near limit", "request latency rises", "possible throttling"],
+  "expected_evidence": ["container_cpu_usage_seconds_total spike", "latency histogram shift"],
+  "expected_resolution": "Kill the injected process; CPU returns to baseline.",
+  "recovery_behavior": "automatic_on_timer_and_on_sigint",
+  "timeline": [
+    {"t": "T+0s", "event": "baseline"},
+    {"t": "T+2s", "event": "cpu burn started"},
+    {"t": "T+90s", "event": "cpu burn stopped"},
+    {"t": "T+95s", "event": "CPU recovered"}
+  ]
+}
