@@ -7,6 +7,7 @@
   "expected_root_cause": "The v1.3.0 deployment introduced a request timeout that was too short for the product-service dependency.",
   "expected_symptoms": ["The order creation error rate steps up immediately after deployment.", "Product-service timeout errors appear in order-service logs.", "Successful requests return after the v1.3.1 rollback deployment."],
   "severity": "HIGH",
+  "expected_resolution": "Deploy v1.3.1 with the dependency timeout restored to five seconds.",
   "simulator": "simulate.py",
   "related_deployment": {"service": "order-service", "version": "v1.3.0", "commit_id": "PENDING"}
 }
