@@ -75,11 +75,15 @@ services:
 
       USER_SERVICE_URL: http://user-service:8000
 
-      PRODUCT_SERVICE_URL: http://product-service:8000
+      PRODUCT_SERVICE_URL: http://dependency-proxy:9000
 
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
 
       DEPLOYMENT_ENVIRONMENT: development
+
+      ORDER_SERVICE_VERSION: ${ORDER_SERVICE_VERSION:-v1.3.1}
+
+      INCIDENT_ORDER_FAULT_MODE: ${INCIDENT_ORDER_FAULT_MODE:-none}
 
     depends_on:
 
@@ -90,6 +94,9 @@ services:
         condition: service_started
 
       product-service:
+        condition: service_started
+
+      dependency-proxy:
         condition: service_started
 
       otel-collector:
@@ -223,6 +230,8 @@ services:
         condition: service_started
       cadvisor:
         condition: service_started
+      docker-metrics-exporter:
+        condition: service_started
 
     networks:
       - devops-network
@@ -325,6 +334,51 @@ services:
 
     ports:
       - "8080:8080"
+
+    networks:
+      - devops-network
+
+
+  # Docker Desktop's containerd image store is not discoverable by cAdvisor.
+  # This read-only exporter supplies the same CPU/memory metric names.
+  docker-metrics-exporter:
+    image: python:3.13-slim
+
+    container_name: docker-metrics-exporter
+
+    command: ["python", "/exporter/docker-metrics-exporter.py"]
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./observability/docker-metrics-exporter.py:/exporter/docker-metrics-exporter.py:ro
+
+    ports:
+      - "9101:9101"
+
+    networks:
+      - devops-network
+
+
+  dependency-proxy:
+    image: python:3.13-slim
+
+    container_name: dependency-proxy
+
+    command: ["python", "/proxy/dependency-proxy.py"]
+
+    environment:
+      TARGET_HOST: product-service
+      TARGET_PORT: "8000"
+
+    volumes:
+      - ./observability/dependency-proxy.py:/proxy/dependency-proxy.py:ro
+
+    ports:
+      - "9001:9001"
+
+    depends_on:
+      product-service:
+        condition: service_started
 
     networks:
       - devops-network

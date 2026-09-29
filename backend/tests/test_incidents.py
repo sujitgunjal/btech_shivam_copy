@@ -147,11 +147,30 @@ def test_resolve_incident_not_found(client):
 
 
 def test_get_evidence_empty(client):
-    """GET /incidents/{id}/evidence returns empty list initially."""
+    """GET /incidents/{id}/evidence returns unified evidence with empty arrays initially."""
     create_resp = client.post("/incidents", json=SAMPLE_INCIDENT)
     incident_id = create_resp.json()["id"]
 
     response = client.get(f"/incidents/{incident_id}/evidence")
+    assert response.status_code == 200
+    data = response.json()
+    # Unified evidence response returns structured dict, not bare list
+    assert isinstance(data, dict)
+    assert "logs" in data
+    assert "metrics" in data
+    assert "traces" in data
+    assert isinstance(data["logs"], list)
+    assert isinstance(data["metrics"], list)
+    assert isinstance(data["traces"], list)
+    assert data["service"] == SAMPLE_INCIDENT["service"]
+
+
+def test_get_evidence_legacy_format(client):
+    """GET /incidents/{id}/evidence?format=legacy returns DB evidence rows."""
+    create_resp = client.post("/incidents", json=SAMPLE_INCIDENT)
+    incident_id = create_resp.json()["id"]
+
+    response = client.get(f"/incidents/{incident_id}/evidence?format=legacy")
     assert response.status_code == 200
     assert response.json() == []
 
@@ -160,3 +179,4 @@ def test_get_evidence_not_found(client):
     """GET /incidents/{id}/evidence for unknown ID returns 404."""
     response = client.get("/incidents/9999/evidence")
     assert response.status_code == 404
+

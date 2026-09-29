@@ -10,14 +10,15 @@ Application compose service.
 HIGH
 
 ## Expected Root Cause (GROUND TRUTH)
-Defective code/config shipped in the most recent deployment.
+The deployed version expects a product response field that the dependency does not provide.
 
 ## Expected Symptoms
-Error-rate step change tied to deployment time.
+Order creation changes from HTTP 201 to HTTP 500 at deployment time and recovers after rollback.
 
 ## Expected Evidence
 - `deployments/deployment_history.json` entry with matching timestamp
-- Backend error logs
+- Successful product dependency spans beneath failed order-service spans
+- Order-service response-processing exception logs
 - Prometheus error counter step
 
 ## Timeline

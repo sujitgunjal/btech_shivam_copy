@@ -21,6 +21,11 @@ logger = logging.getLogger("incident-backend")
 class TelemetryService:
     """Orchestrates concurrent telemetry collection from all sources."""
 
+    RELATED_EVIDENCE_SERVICES = {
+        "postgres": ("user-service", "product-service", "order-service"),
+        "product-service": ("order-service",),
+    }
+
     def __init__(self) -> None:
         settings = get_settings()
         self.prometheus = PrometheusCollector(
@@ -49,23 +54,29 @@ class TelemetryService:
         all_events: list[NormalizedEvent] = []
         all_errors: list[dict] = []
 
-        results = await asyncio.gather(
-            self._safe_collect(
-                "prometheus", self.prometheus, service, start_time, end_time
-            ),
-            self._safe_collect(
-                "loki", self.loki, service, start_time, end_time
-            ),
-            self._safe_collect(
-                "jaeger", self.jaeger, service, start_time, end_time
-            ),
+        services = (service, *self.RELATED_EVIDENCE_SERVICES.get(service, ()))
+        collectors = (
+            ("prometheus", self.prometheus),
+            ("loki", self.loki),
+            ("jaeger", self.jaeger),
         )
+        results = await asyncio.gather(*[
+            self._safe_collect(
+                source_name, collector, scoped_service, start_time, end_time
+            )
+            for scoped_service in services
+            for source_name, collector in collectors
+        ])
 
         for events, errors in results:
             all_events.extend(events)
             all_errors.extend(errors)
 
         return all_events, all_errors
+
+    def collector_count(self, service: str) -> int:
+        service_count = 1 + len(self.RELATED_EVIDENCE_SERVICES.get(service, ()))
+        return service_count * 3
 
     async def _safe_collect(
         self,
@@ -96,6 +107,7 @@ class TelemetryService:
             return [], [
                 {
                     "source": source_name,
+                    "service": service,
                     "message": f"{source_name} unavailable: {exc}",
                     "error_type": type(exc).__name__,
                 }

@@ -39,3 +39,22 @@ class EvidenceResponse(BaseModel):
         default_factory=dict, validation_alias="metadata_"
     )
     created_at: datetime
+
+
+class TimeWindow(BaseModel):
+    """Time window for unified incident evidence."""
+
+    start: str
+    end: str
+
+
+class UnifiedEvidenceResponse(BaseModel):
+    """Unified evidence response schema combining logs, metrics, and traces."""
+
+    incident_id: str
+    service: str
+    time_window: TimeWindow
+    logs: list[dict] = Field(default_factory=list)
+    metrics: list[dict] = Field(default_factory=list)
+    traces: list[dict] = Field(default_factory=list)
+

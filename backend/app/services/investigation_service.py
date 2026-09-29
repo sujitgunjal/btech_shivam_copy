@@ -116,7 +116,7 @@ class InvestigationService:
             error_evidence = Evidence(
                 incident_id=incident.id,
                 source=error["source"],
-                service=service_name,
+                service=error.get("service", service_name),
                 timestamp=datetime.now(timezone.utc),
                 event_type="collector_error",
                 severity="warning",
@@ -128,7 +128,7 @@ class InvestigationService:
         self.db.commit()
 
         # 8. Determine final status
-        total_collectors = 3
+        total_collectors = self.telemetry.collector_count(service_name)
         failed_collectors = len(errors)
 
         if failed_collectors == 0:

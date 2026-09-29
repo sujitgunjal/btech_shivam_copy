@@ -80,6 +80,7 @@ def configure_telemetry(app, engine, service_name):
     resource = Resource.create(
         {
             "service.name": service_name,
+            "service.version": os.getenv("ORDER_SERVICE_VERSION", "v1.3.1"),
             "deployment.environment": os.getenv(
                 "DEPLOYMENT_ENVIRONMENT", "development"
             ),

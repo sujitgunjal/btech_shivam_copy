@@ -1,7 +1,7 @@
 # Incident: high_latency
 
 ## Purpose
-Inject artificial latency into one service.
+Inject bounded latency only on the order-service to product-service path.
 
 ## Affected Service
 Application compose service (auto-detected, override with `--service`).
@@ -10,12 +10,12 @@ Application compose service (auto-detected, override with `--service`).
 MEDIUM
 
 ## Expected Root Cause (GROUND TRUTH)
-Network delay injected via `tc netem` inside the target container.
+Bounded delay on the product-service dependency transport.
 
 ## Expected Symptoms
-- p99 latency ~2s
-- client timeouts
-- slow traces
+- successful but significantly slower order requests
+- healthy unrelated service paths
+- slow dependency traces
 
 ## Expected Evidence
 Prometheus latency histogram shift, Jaeger spans.
@@ -25,4 +25,4 @@ T+0 baseline → T+2 delay applied → T+90 removed → T+95 recovered.
 
 ## How to Run
 ```bash
-python incidents/high_latency/simulate.py --service order-service --delay-ms 2000 --duration 90
+python incidents/high_latency/simulate.py --service order-service --delay-ms 1500 --duration 90

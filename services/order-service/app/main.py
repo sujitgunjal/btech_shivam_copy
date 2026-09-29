@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from .database import Base, engine, get_db
+from .fault_injection import router as fault_router
 from .models import Order
 from .telemetry import configure_telemetry
 
@@ -32,6 +33,9 @@ logging.basicConfig(
 
 logger = logging.getLogger("order-service")
 
+SERVICE_VERSION = os.getenv("ORDER_SERVICE_VERSION", "v1.3.1")
+FAULT_MODE = os.getenv("INCIDENT_ORDER_FAULT_MODE", "none")
+
 
 # --------------------------------------------------
 # FastAPI
@@ -40,9 +44,10 @@ logger = logging.getLogger("order-service")
 app = FastAPI(
     title="Order Service",
     description="Order microservice for the AI DevOps Incident Investigation System",
-    version="1.0.0"
+    version=SERVICE_VERSION,
 )
 configure_telemetry(app, engine, "order-service")
+app.include_router(fault_router)
 
 
 # --------------------------------------------------
@@ -60,6 +65,9 @@ USER_SERVICE_URL = os.getenv(
 PRODUCT_SERVICE_URL = os.getenv(
     "PRODUCT_SERVICE_URL",
     "http://product-service:8000"
+)
+PRODUCT_STOCK_FIELD = (
+    "available_stock" if FAULT_MODE == "product_contract_regression" else "stock"
 )
 
 
@@ -93,7 +101,8 @@ class OrderResponse(BaseModel):
 def health_check():
     return {
         "service": "order-service",
-        "status": "healthy"
+        "status": "healthy",
+        "version": SERVICE_VERSION,
     }
 
 
@@ -250,6 +259,10 @@ async def create_order(
         )
 
     if product_response.status_code != 200:
+        logger.error(
+            "Unexpected product-service response status=%s",
+            product_response.status_code,
+        )
 
         raise HTTPException(
             status_code=502,
@@ -262,7 +275,13 @@ async def create_order(
     # 3. Check stock
     # ----------------------------------------------
 
-    if product["stock"] < order_data.quantity:
+    try:
+        available_stock = product[PRODUCT_STOCK_FIELD]
+    except KeyError:
+        logger.exception("Failed to process product-service response")
+        raise
+
+    if available_stock < order_data.quantity:
 
         logger.warning(
             "Insufficient stock for product_id=%s",

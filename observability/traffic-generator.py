@@ -3,6 +3,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 
 USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://user-service:8000")
@@ -16,15 +17,31 @@ def request(method, url, payload=None):
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
+    started = time.monotonic()
     try:
         with urllib.request.urlopen(
             urllib.request.Request(url, data=data, headers=headers, method=method),
-            timeout=5,
+            timeout=7,
         ) as response:
             body = response.read().decode("utf-8")
             return response.status, json.loads(body) if body else None
+    except urllib.error.HTTPError as error:
+        elapsed_ms = (time.monotonic() - started) * 1000
+        print(
+            f"{datetime.now(timezone.utc).isoformat()} "
+            f"request returned HTTP {error.code}: {method} {url} "
+            f"duration_ms={elapsed_ms:.1f}",
+            flush=True,
+        )
+        return error.code, None
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
-        print(f"request failed: {method} {url}: {error}", flush=True)
+        elapsed_ms = (time.monotonic() - started) * 1000
+        print(
+            f"{datetime.now(timezone.utc).isoformat()} "
+            f"request failed: {method} {url}: {error} "
+            f"duration_ms={elapsed_ms:.1f}",
+            flush=True,
+        )
         return None, None
 
 
@@ -60,11 +77,13 @@ def ensure_data():
     return user, product
 
 
+user = None
+product = None
+
 while True:
-    user, product = ensure_data()
+    if not user or not product:
+        user, product = ensure_data()
     if user and product:
-        request("GET", f"{USER_SERVICE_URL}/users/{user['id']}")
-        request("GET", f"{PRODUCT_SERVICE_URL}/products/{product['id']}")
         status, order = request(
             "POST",
             f"{ORDER_SERVICE_URL}/orders",
@@ -72,4 +91,6 @@ while True:
         )
         if status == 201 and order:
             request("GET", f"{ORDER_SERVICE_URL}/orders/{order['id']}")
+        request("GET", f"{USER_SERVICE_URL}/users/{user['id']}")
+        request("GET", f"{PRODUCT_SERVICE_URL}/products/{product['id']}")
     time.sleep(2)

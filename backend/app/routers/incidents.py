@@ -1,13 +1,12 @@
-"""Incident management endpoints."""
-
 import logging
-from typing import Optional
+from datetime import datetime
+from typing import Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..schemas.evidence import EvidenceResponse
+from ..schemas.evidence import EvidenceResponse, UnifiedEvidenceResponse
 from ..schemas.incident import (
     IncidentCreate,
     IncidentListResponse,
@@ -15,7 +14,8 @@ from ..schemas.incident import (
     IncidentUpdate,
 )
 from ..schemas.investigation import InvestigationResponse
-from ..services.incident_service import IncidentService
+from ..services.evidence_service import EvidenceService
+from ..services.incident_service import IncidentService, find_incident_scenario
 from ..services.investigation_service import InvestigationService
 
 logger = logging.getLogger("incident-backend")
@@ -54,15 +54,16 @@ def list_incidents(
 
 @router.get("/{incident_id}", response_model=IncidentResponse)
 def get_incident(
-    incident_id: int,
+    incident_id: str,
     db: Session = Depends(get_db),
 ):
-    """Get a single incident by ID."""
+    """Get a single incident by ID or external ID."""
     svc = IncidentService(db)
-    incident = svc.get(incident_id)
+    incident = svc.get_by_identifier(incident_id)
     if incident is None:
         raise HTTPException(status_code=404, detail="Incident not found")
     return incident
+
 
 
 @router.patch("/{incident_id}", response_model=IncidentResponse)
@@ -136,15 +137,56 @@ async def investigate_incident(
 
 @router.get(
     "/{incident_id}/evidence",
-    response_model=list[EvidenceResponse],
+    response_model=Union[UnifiedEvidenceResponse, list[EvidenceResponse]],
 )
-def get_incident_evidence(
-    incident_id: int,
+async def get_incident_evidence(
+    incident_id: str,
+    start_time: Optional[datetime] = Query(None, description="Optional override start time"),
+    end_time: Optional[datetime] = Query(None, description="Optional override end time"),
+    format: Optional[str] = Query(None, description="Set to 'raw' or 'legacy' for DB rows"),
     db: Session = Depends(get_db),
 ):
-    """List all evidence for an incident."""
+    """Obtain unified telemetry evidence (logs, metrics, traces) for an incident.
+
+    Automatically resolves the affected service and relevant time window from
+    the incident data (database or scenario library).
+    """
     svc = IncidentService(db)
-    incident = svc.get(incident_id)
-    if incident is None:
-        raise HTTPException(status_code=404, detail="Incident not found")
-    return svc.get_evidence(incident_id)
+    incident = svc.get_by_identifier(incident_id)
+
+    # Legacy raw format request
+    if format in ("raw", "legacy", "db"):
+        if incident is None:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        return svc.get_evidence(incident.id)
+
+    service: str
+    target_start: datetime | str
+    target_end: datetime | str | None
+    resolved_id: str
+
+    if incident is not None:
+        service = incident.service
+        target_start = start_time or incident.start_time
+        target_end = end_time or incident.end_time
+        resolved_id = incident.external_id or f"INC-{incident.id:04d}"
+    else:
+        scenario = find_incident_scenario(incident_id)
+        if scenario is not None:
+            service = scenario["service"]
+            target_start = start_time or scenario["start_time"]
+            target_end = end_time or scenario["end_time"]
+            resolved_id = scenario["incident_id"]
+        else:
+            raise HTTPException(
+                status_code=404, detail=f"Incident '{incident_id}' not found"
+            )
+
+    evidence_svc = EvidenceService()
+    return await evidence_svc.get_incident_evidence(
+        incident_id=resolved_id,
+        service=service,
+        start_time=target_start,
+        end_time=target_end,
+    )
+

@@ -53,6 +53,43 @@ class IncidentService:
             .first()
         )
 
+    def get_by_identifier(self, identifier: str | int) -> Incident | None:
+        """Find an incident by primary key, external_id, or normalized ID."""
+        if isinstance(identifier, int) or (isinstance(identifier, str) and identifier.isdigit()):
+            inc = self.get(int(identifier))
+            if inc:
+                return inc
+
+        str_id = str(identifier).strip()
+        # Direct external_id lookup
+        inc = (
+            self.db.query(Incident)
+            .filter(Incident.external_id == str_id)
+            .first()
+        )
+        if inc:
+            return inc
+
+        # Normalized lookup (e.g. INC-001 vs INC-0001)
+        if str_id.upper().startswith("INC-"):
+            num_str = str_id[4:].lstrip("0")
+            if num_str.isdigit():
+                num = int(num_str)
+                candidates = [f"INC-{num:03d}", f"INC-{num:04d}", f"INC-{num}"]
+                inc = (
+                    self.db.query(Incident)
+                    .filter(Incident.external_id.in_(candidates))
+                    .first()
+                )
+                if inc:
+                    return inc
+                inc = self.get(num)
+                if inc:
+                    return inc
+
+        return None
+
+
     def list_incidents(
         self,
         status: Optional[str] = None,
@@ -109,3 +146,51 @@ class IncidentService:
             .order_by(Evidence.timestamp.asc())
             .all()
         )
+
+
+def find_incident_scenario(incident_id: str | int) -> dict | None:
+    """Find scenario metadata (service, start_time, end_time) from scenario.json files.
+
+    IMPORTANT: This only returns the operational fields needed for telemetry collection.
+    It NEVER returns expected_root_cause or ground truth!
+    """
+    import json
+    from pathlib import Path
+
+    str_id = str(incident_id).strip().upper()
+    candidate_ids = {str_id}
+    if str_id.startswith("INC-"):
+        num_str = str_id[4:].lstrip("0")
+        if num_str.isdigit():
+            num = int(num_str)
+            candidate_ids.add(f"INC-{num:03d}")
+            candidate_ids.add(f"INC-{num:04d}")
+            candidate_ids.add(str(num))
+    elif str_id.isdigit():
+        num = int(str_id)
+        candidate_ids.add(f"INC-{num:03d}")
+        candidate_ids.add(f"INC-{num:04d}")
+
+    possible_roots = [
+        Path.cwd() / "incidents",
+        Path(__file__).resolve().parents[3] / "incidents",
+        Path(__file__).resolve().parents[2] / "incidents",
+        Path("/incidents"),
+    ]
+    for root in possible_roots:
+        if root.exists():
+            for scenario_path in root.glob("*/scenario.json"):
+                try:
+                    with open(scenario_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    if data.get("incident_id") in candidate_ids:
+                        return {
+                            "incident_id": data.get("incident_id"),
+                            "service": data.get("affected_service"),
+                            "start_time": data.get("start_time"),
+                            "end_time": data.get("end_time"),
+                        }
+                except Exception:
+                    continue
+    return None
+

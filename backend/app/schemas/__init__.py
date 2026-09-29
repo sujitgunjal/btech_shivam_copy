@@ -5,7 +5,7 @@ from .dashboard import (
     ServiceHealthItem,
     ServicesListResponse,
 )
-from .evidence import EvidenceResponse, NormalizedEvent
+from .evidence import EvidenceResponse, NormalizedEvent, TimeWindow, UnifiedEvidenceResponse
 from .incident import (
     IncidentCreate,
     IncidentListResponse,
@@ -22,6 +22,8 @@ __all__ = [
     "InvestigationResponse",
     "EvidenceResponse",
     "NormalizedEvent",
+    "TimeWindow",
+    "UnifiedEvidenceResponse",
     "DashboardOverviewResponse",
     "ServiceHealthItem",
     "ServicesListResponse",

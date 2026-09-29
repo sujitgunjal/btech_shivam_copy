@@ -15,13 +15,17 @@ import json
 import logging
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 LOG_FORMAT = "%(asctime)s | %(levelname)-7s | %(message)s"
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
@@ -126,13 +130,21 @@ def discover_service(
 # --------------------------------------------------------------------------- #
 # Docker CLI wrappers (safe subset)
 # --------------------------------------------------------------------------- #
-def run(cmd: list[str], check: bool = True, capture: bool = True) -> subprocess.CompletedProcess:
+def run(
+    cmd: list[str],
+    check: bool = True,
+    capture: bool = True,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
     log.debug("$ %s", " ".join(cmd))
     return subprocess.run(
         cmd,
         check=check,
         capture_output=capture,
         text=True,
+        cwd=cwd,
+        env=env,
     )
 
 
@@ -149,8 +161,9 @@ def container_id(service: str, root: Path | None = None) -> str | None:
     root = root or find_project_root()
     try:
         cp = run(
-            ["docker", "compose", "ps", "-q", service],
+            ["docker", "compose", "-f", str(root / "docker-compose.yml"), "ps", "-q", service],
             check=False,
+            cwd=root,
         )
         cid = cp.stdout.strip().splitlines()
         return cid[0] if cid else None
@@ -163,7 +176,9 @@ def pause_container(cid: str) -> None:
 
 
 def unpause_container(cid: str) -> None:
-    run(["docker", "unpause", cid])
+    cp = run(["docker", "unpause", cid], check=False)
+    if cp.returncode:
+        log.warning("Could not unpause container %s: %s", cid, cp.stderr.strip())
 
 
 def exec_in_container(cid: str, argv: list[str], detach: bool = False) -> subprocess.CompletedProcess:
@@ -173,6 +188,232 @@ def exec_in_container(cid: str, argv: list[str], detach: bool = False) -> subpro
     base.append(cid)
     base.extend(argv)
     return run(base, check=False)
+
+
+def require_container(service: str, root: Path) -> str:
+    cid = container_id(service, root)
+    if not cid:
+        raise RuntimeError(
+            f"No running container found for compose service {service!r}. "
+            "Start the environment with 'docker compose up -d' first."
+        )
+    return cid
+
+
+def compose(
+    root: Path,
+    *args: str,
+    environment: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
+    env = os.environ.copy()
+    if environment:
+        env.update(environment)
+    return run(
+        ["docker", "compose", "-f", str(root / "docker-compose.yml"), *args],
+        check=False,
+        cwd=root,
+        env=env,
+    )
+
+
+def start_traffic_generator(root: Path) -> bool:
+    """Start the optional Compose traffic generator only when it was not running."""
+    if container_id("traffic-generator", root):
+        return False
+    cp = compose(root, "--profile", "traffic", "up", "-d", "traffic-generator")
+    if cp.returncode:
+        raise RuntimeError(
+            "Could not start the optional traffic-generator profile: "
+            f"{cp.stderr.strip() or cp.stdout.strip()}"
+        )
+    log.info("Started traffic-generator to produce application logs, metrics, and traces.")
+    return True
+
+
+def stop_traffic_generator(root: Path) -> None:
+    """Stop only the optional traffic generator started by a simulator."""
+    cp = compose(root, "--profile", "traffic", "stop", "traffic-generator")
+    if cp.returncode:
+        log.warning("Could not stop traffic-generator: %s", cp.stderr.strip())
+
+
+def container_environment(cid: str) -> dict[str, str]:
+    cp = run(
+        ["docker", "inspect", cid, "--format", "{{range .Config.Env}}{{println .}}{{end}}"],
+        check=False,
+    )
+    if cp.returncode:
+        return {}
+    return dict(line.split("=", 1) for line in cp.stdout.splitlines() if "=" in line)
+
+
+def recreate_order_service(root: Path, version: str, fault_mode: str) -> None:
+    cp = compose(
+        root,
+        "up", "-d", "--force-recreate", "--no-deps", "order-service",
+        environment={
+            "ORDER_SERVICE_VERSION": version,
+            "INCIDENT_ORDER_FAULT_MODE": fault_mode,
+        },
+    )
+    if cp.returncode:
+        raise RuntimeError(
+            "Could not recreate order-service for the deployment scenario: "
+            f"{cp.stderr.strip() or cp.stdout.strip()}"
+        )
+
+
+def wait_for_http(url: str, timeout_seconds: int = 30) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    last_error = "unknown error"
+    while time.monotonic() < deadline:
+        try:
+            with urlopen(url, timeout=2) as response:
+                if 200 <= response.status < 300:
+                    return
+                last_error = f"HTTP {response.status}"
+        except (URLError, TimeoutError, OSError) as exc:
+            last_error = str(exc)
+        time.sleep(1)
+    raise RuntimeError(f"Service did not become healthy at {url}: {last_error}")
+
+
+def configure_dependency_proxy(mode: str, delay_ms: int = 0) -> None:
+    payload = json.dumps({"mode": mode, "delay_ms": delay_ms}).encode()
+    request = Request(
+        "http://localhost:9001/mode",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=5) as response:
+            if response.status != 200:
+                raise RuntimeError(f"Dependency proxy returned HTTP {response.status}.")
+    except (URLError, TimeoutError, OSError) as exc:
+        raise RuntimeError(f"Could not configure dependency proxy: {exc}") from exc
+
+
+# --------------------------------------------------------------------------- #
+# Built-in fault injection API (replaces docker exec approach)
+# --------------------------------------------------------------------------- #
+SERVICE_PORTS: dict[str, int] = {
+    "order-service": 8003,
+    "user-service": 8001,
+    "product-service": 8002,
+}
+
+
+def _service_base_url(service: str) -> str:
+    port = SERVICE_PORTS.get(service, 8003)
+    return f"http://localhost:{port}"
+
+
+def inject_fault(
+    service: str,
+    mode: str,
+    *,
+    workers: int = 2,
+    megabytes: int = 200,
+    duration_seconds: int = 180,
+) -> None:
+    """Activate a fault via the service's built-in /admin/fault API."""
+    url = f"{_service_base_url(service)}/admin/fault"
+    body = json.dumps({
+        "mode": mode,
+        "workers": workers,
+        "megabytes": megabytes,
+        "duration_seconds": duration_seconds,
+    }).encode()
+    req = Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Fault injection returned HTTP {resp.status}")
+            result = json.loads(resp.read().decode())
+            log.info("Fault injected: %s", result)
+    except (URLError, TimeoutError, OSError) as exc:
+        raise RuntimeError(
+            f"Could not inject fault via {url}: {exc}\n"
+            "Make sure the service is running and includes the fault_injection router."
+        ) from exc
+
+
+def clear_fault(service: str) -> None:
+    """Clear all active faults via the service's /admin/fault API."""
+    url = f"{_service_base_url(service)}/admin/fault"
+    req = Request(url, method="DELETE")
+    try:
+        with urlopen(req, timeout=10) as resp:
+            log.info("Faults cleared on %s (HTTP %s)", service, resp.status)
+    except (URLError, TimeoutError, OSError) as exc:
+        log.warning("Could not clear fault on %s: %s", service, exc)
+
+
+# --------------------------------------------------------------------------- #
+# Legacy docker exec helpers (kept for backward compatibility, prefer the
+# built-in fault injection API above for new code)
+# --------------------------------------------------------------------------- #
+def start_background_python(cid: str, marker: str, source: str) -> None:
+    """Run a bounded Python workload in a container and save its PID for recovery."""
+    command = f"rm -f {shlex.quote(marker)}; echo $$ > {shlex.quote(marker)}; exec python -c {shlex.quote(source)}"
+    cp = exec_in_container(cid, ["sh", "-ec", command], detach=True)
+    if cp.returncode:
+        raise RuntimeError(f"Could not start workload: {cp.stderr.strip() or cp.stdout.strip()}")
+
+
+def stop_background_python(cid: str, marker: str) -> None:
+    source = (
+        "import os, signal, sys\n"
+        "root = int(sys.argv[1])\n"
+        "children = {}\n"
+        "for entry in os.listdir('/proc'):\n"
+        "    if not entry.isdigit():\n"
+        "        continue\n"
+        "    try:\n"
+        "        fields = open(f'/proc/{entry}/stat').read().split()\n"
+        "        children.setdefault(int(fields[3]), []).append(int(entry))\n"
+        "    except (OSError, ValueError, IndexError):\n"
+        "        pass\n"
+        "pending = [root]\n"
+        "descendants = []\n"
+        "while pending:\n"
+        "    parent = pending.pop()\n"
+        "    direct = children.get(parent, [])\n"
+        "    descendants.extend(direct)\n"
+        "    pending.extend(direct)\n"
+        "for pid in reversed(descendants):\n"
+        "    try: os.kill(pid, signal.SIGTERM)\n"
+        "    except (ProcessLookupError, PermissionError): pass\n"
+        "try: os.kill(root, signal.SIGTERM)\n"
+        "except (ProcessLookupError, PermissionError): pass\n"
+    )
+    command = (
+        f"if [ -f {shlex.quote(marker)} ]; then "
+        f"pid=$(cat {shlex.quote(marker)}); "
+        f"python -c {shlex.quote(source)} \"$pid\"; "
+        f"rm -f {shlex.quote(marker)}; fi"
+    )
+    cp = exec_in_container(cid, ["sh", "-ec", command])
+    if cp.returncode:
+        log.warning("Could not stop workload recorded in %s", marker)
+
+
+def wait_for_duration(seconds: int, incident_id: str) -> None:
+    emit_phase("active", incident_id=incident_id, duration_seconds=seconds)
+    time.sleep(seconds)
+
+
+def observe_baseline(seconds: int, incident_id: str) -> None:
+    seconds = max(0, min(seconds, 120))
+    emit_phase("baseline", incident_id=incident_id, duration_seconds=seconds)
+    time.sleep(seconds)
+
+
+def observe_recovery(seconds: int, incident_id: str) -> None:
+    seconds = max(0, min(seconds, 120))
+    emit_phase("recovery_observation", incident_id=incident_id, duration_seconds=seconds)
+    time.sleep(seconds)
 
 
 # --------------------------------------------------------------------------- #
@@ -211,6 +452,23 @@ class IncidentState:
         return cls(**json.loads(p.read_text(encoding="utf-8")))
 
 
+def finish_recovery(
+    root: Path,
+    state: IncidentState,
+    recovery_seconds: int,
+    health_url: str | None = None,
+) -> None:
+    """Observe recovered traffic, then restore traffic-generator ownership and state."""
+    try:
+        if health_url:
+            wait_for_http(health_url)
+        observe_recovery(recovery_seconds, state.incident_id)
+    finally:
+        if state.extras.get("traffic_started"):
+            stop_traffic_generator(root)
+        state.clear()
+
+
 # --------------------------------------------------------------------------- #
 # Argparse + graceful shutdown boilerplate
 # --------------------------------------------------------------------------- #
@@ -221,6 +479,10 @@ def base_argparser(description: str) -> argparse.ArgumentParser:
                    help="Incident duration in seconds (default 90, max 600).")
     p.add_argument("--intensity", type=float, default=1.0,
                    help="Relative intensity (default 1.0).")
+    p.add_argument("--baseline-seconds", type=int, default=15,
+                   help="Normal-traffic observation window before injection (default 15).")
+    p.add_argument("--recovery-seconds", type=int, default=15,
+                   help="Normal-traffic observation window after recovery (default 15).")
     p.add_argument("--recover", action="store_true",
                    help="Recover from a previously interrupted run and exit.")
     p.add_argument("--dry-run", action="store_true",
@@ -268,5 +530,9 @@ def banner(incident_id: str, incident_type: str, service: str, phase: str) -> No
 
 
 def emit_phase(phase: str, **kwargs: Any) -> None:
-    payload = {"phase": phase, **kwargs}
+    payload = {
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "phase": phase,
+        **kwargs,
+    }
     print(json.dumps(payload), flush=True)
