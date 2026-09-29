@@ -12,7 +12,12 @@ from .incident import (
     IncidentResponse,
     IncidentUpdate,
 )
-from .investigation import InvestigationResponse
+from .investigation import (
+    HistoricalIncidentRef,
+    InvestigationResponse,
+    RootCauseAnalysis,
+    TimelineEntry,
+)
 
 __all__ = [
     "IncidentCreate",
@@ -20,6 +25,9 @@ __all__ = [
     "IncidentResponse",
     "IncidentListResponse",
     "InvestigationResponse",
+    "RootCauseAnalysis",
+    "TimelineEntry",
+    "HistoricalIncidentRef",
     "EvidenceResponse",
     "NormalizedEvent",
     "TimeWindow",

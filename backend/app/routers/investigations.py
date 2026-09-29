@@ -1,5 +1,6 @@
 """Investigation endpoints."""
 
+import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -30,13 +31,20 @@ def get_investigation(
 
     evidence_count = inv_svc.count_evidence(investigation.incident_id)
 
+    report_data = None
+    if investigation.report:
+        try:
+            report_data = json.loads(investigation.report)
+        except (json.JSONDecodeError, TypeError):
+            report_data = {"raw": investigation.report}
+
     return InvestigationResponse(
         id=investigation.id,
         incident_id=investigation.incident_id,
         status=investigation.status,
         started_at=investigation.started_at,
         completed_at=investigation.completed_at,
-        report=investigation.report,
+        report=report_data,
         confidence=investigation.confidence,
         created_at=investigation.created_at,
         evidence_count=evidence_count,

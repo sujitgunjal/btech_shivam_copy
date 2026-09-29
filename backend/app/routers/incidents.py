@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import datetime
 from typing import Optional, Union
@@ -122,13 +123,15 @@ async def investigate_incident(
         investigation.status,
     )
 
+    report_data = _parse_report(investigation.report)
+
     return InvestigationResponse(
         id=investigation.id,
         incident_id=investigation.incident_id,
         status=investigation.status,
         started_at=investigation.started_at,
         completed_at=investigation.completed_at,
-        report=investigation.report,
+        report=report_data,
         confidence=investigation.confidence,
         created_at=investigation.created_at,
         evidence_count=evidence_count,
@@ -189,4 +192,14 @@ async def get_incident_evidence(
         start_time=target_start,
         end_time=target_end,
     )
+
+
+def _parse_report(report_value: str | None) -> dict | None:
+    """Deserialize a JSON report string from the DB into a dict."""
+    if report_value is None:
+        return None
+    try:
+        return json.loads(report_value)
+    except (json.JSONDecodeError, TypeError):
+        return {"raw": report_value}
 

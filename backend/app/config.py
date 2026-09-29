@@ -20,6 +20,17 @@ class Settings(BaseSettings):
     # Collector settings
     COLLECTOR_TIMEOUT: float = 2.0
 
+    # LLM settings (Ollama with Gemma 4)
+    LLM_MODEL: str = "gemma4:31b-cloud"
+    LLM_API_KEY: str = "ollama"
+    LLM_BASE_URL: str = "http://host.docker.internal:11434/v1"
+    LLM_TEMPERATURE: float = 0.2
+    LLM_MAX_TOKENS: int = 3000
+
+    # RAG settings
+    RAG_TOP_K: int = 3
+    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+
     model_config = {"env_file": ".env", "case_sensitive": True}
 
 

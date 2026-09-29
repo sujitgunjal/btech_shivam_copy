@@ -1,5 +1,6 @@
 """Business logic for investigation orchestration."""
 
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -16,8 +17,8 @@ logger = logging.getLogger("incident-backend")
 class InvestigationService:
     """Orchestrates the full investigation workflow.
 
-    Future steps (RAG retrieval, vector DB query, LLM reasoning)
-    will be added after step 9 without restructuring.
+    Steps 1-8 collect telemetry evidence from Prometheus, Loki, and Jaeger.
+    Steps 9-12 run the RAG + LLM investigation pipeline.
     """
 
     def __init__(self, db: Session):
@@ -39,14 +40,11 @@ class InvestigationService:
         5. Collect telemetry concurrently.
         6. Normalize and store evidence.
         7. Record collector errors as evidence.
-        8. Set final investigation status.
-        9. Return investigation.
-
-        Future additions (no rewrite needed):
-        10. Retrieve from vector database.
-        11. Build RAG context.
-        12. Call LLM.
-        13. Generate RCA report.
+        8. Record evidence collection outcome.
+        9. Set investigation status -> analyzing.
+        10. Retrieve historical incidents via RAG.
+        11. Call LLM for root cause analysis.
+        12. Store RCA report and set final status.
         """
 
         # 1. Create investigation
@@ -127,13 +125,40 @@ class InvestigationService:
 
         self.db.commit()
 
-        # 8. Determine final status
+        # 8. Record evidence collection outcome
         total_collectors = self.telemetry.collector_count(service_name)
         failed_collectors = len(errors)
 
-        if failed_collectors == 0:
-            investigation.status = "completed"
-        elif failed_collectors < total_collectors:
+        if failed_collectors == total_collectors:
+            collection_status = "failed"
+        elif failed_collectors > 0:
+            collection_status = "partial"
+        else:
+            collection_status = "complete"
+
+        logger.info(
+            "Evidence collection %s: evidence=%d errors=%d",
+            collection_status,
+            evidence_count,
+            failed_collectors,
+        )
+
+        # ---------------------------------------------------------------
+        # 9-12. RAG + LLM analysis
+        # ---------------------------------------------------------------
+        investigation.status = "analyzing"
+        self.db.commit()
+
+        rca_result = await self._run_analysis(incident)
+
+        if rca_result is not None:
+            investigation.report = json.dumps(rca_result, default=str)
+            investigation.confidence = rca_result.get("confidence")
+            if collection_status == "complete":
+                investigation.status = "completed"
+            else:
+                investigation.status = "completed_partial"
+        elif evidence_count > 0:
             investigation.status = "completed_partial"
         else:
             investigation.status = "failed"
@@ -143,14 +168,45 @@ class InvestigationService:
         self.db.refresh(investigation)
 
         logger.info(
-            "Investigation %s id=%s evidence=%d errors=%d",
+            "Investigation %s id=%s evidence=%d confidence=%s",
             investigation.status,
             investigation.id,
             evidence_count,
-            failed_collectors,
+            investigation.confidence,
         )
 
         return investigation
+
+    async def _run_analysis(self, incident: Incident) -> dict | None:
+        """Run the RAG + LLM analysis pipeline.
+
+        Returns the RCA dict on success, or None on failure.
+        """
+        try:
+            from ..investigation.engine import InvestigationEngine
+
+            evidence_rows = (
+                self.db.query(Evidence)
+                .filter(
+                    Evidence.incident_id == incident.id,
+                    Evidence.event_type != "collector_error",
+                )
+                .order_by(Evidence.timestamp.asc())
+                .all()
+            )
+
+            engine = InvestigationEngine()
+            rca = await engine.investigate(incident, evidence_rows)
+            return rca
+
+        except Exception as exc:
+            logger.error(
+                "Analysis pipeline failed for incident_id=%s: %s",
+                incident.id,
+                exc,
+                exc_info=True,
+            )
+            return None
 
     # ------------------------------------------------------------------
     # Queries
