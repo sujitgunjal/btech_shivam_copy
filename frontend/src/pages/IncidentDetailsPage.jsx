@@ -44,7 +44,8 @@ const IncidentDetailsPage = () => {
       setIsMock(Boolean(incidentRes.isMock || servicesRes.isMock));
     } catch (err) {
       console.error('[IncidentDetailsPage] Error fetching incident details:', err);
-      setError('Failed to load incident details.');
+      const detail = err?.response?.data?.detail;
+      setError(typeof detail === 'string' ? detail : err?.message || 'Failed to load incident details.');
     } finally {
       setLoading(false);
     }
@@ -111,7 +112,9 @@ const IncidentDetailsPage = () => {
   const liveServiceObj = liveServices.find(
     (s) => s.name?.toLowerCase() === targetServiceName.toLowerCase()
   );
-  const liveStatus = liveServiceObj?.status ? liveServiceObj.status.charAt(0).toUpperCase() + liveServiceObj.status.slice(1) : 'Healthy';
+  const liveStatus = liveServiceObj?.status
+    ? liveServiceObj.status.charAt(0).toUpperCase() + liveServiceObj.status.slice(1)
+    : 'Unknown';
   const isRecovered = liveStatus.toLowerCase() === 'healthy' && incident.status?.toLowerCase() !== 'resolved';
 
   return (
@@ -193,15 +196,15 @@ const IncidentDetailsPage = () => {
               </div>
               <div>
                 <span className="text-slate-500 block font-medium">Environment</span>
-                <span className="text-slate-800 font-semibold">{incident.environment || 'production-us-east'}</span>
+                <span className="text-slate-800 font-semibold">{incident.environment || 'Not available'}</span>
               </div>
               <div>
                 <span className="text-slate-500 block font-medium">Trigger Source</span>
-                <span className="text-slate-800 font-semibold">{incident.reporter || 'Prometheus Alertmanager'}</span>
+                <span className="text-slate-800 font-semibold">{incident.reporter || 'Not available'}</span>
               </div>
               <div>
                 <span className="text-slate-500 block font-medium">Assigned Team</span>
-                <span className="text-slate-800 font-semibold">{incident.assignedTeam || 'Platform SRE Team'}</span>
+                <span className="text-slate-800 font-semibold">{incident.assignedTeam || 'Not available'}</span>
               </div>
               <div>
                 <span className="text-slate-500 block font-medium">Incident Created At</span>
@@ -218,12 +221,16 @@ const IncidentDetailsPage = () => {
             </h2>
 
             <div className="space-y-3 font-mono text-xs">
-              {(incident.timeline || []).map((item, idx) => (
-                <div key={idx} className="flex items-start gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
-                  <span className="text-slate-800 font-bold shrink-0">{item.time}</span>
-                  <span className="text-slate-700 font-sans">{item.event}</span>
-                </div>
-              ))}
+              {(incident.timeline || []).length === 0 ? (
+                <p className="text-xs text-slate-500 font-sans">No timeline was returned by the backend.</p>
+              ) : (
+                incident.timeline.map((item, idx) => (
+                  <div key={idx} className="flex items-start gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                    <span className="text-slate-800 font-bold shrink-0">{item.time || item.timestamp}</span>
+                    <span className="text-slate-700 font-sans">{item.event}</span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
@@ -241,7 +248,7 @@ const IncidentDetailsPage = () => {
                 Captured when incident was detected:
               </span>
               <span className="text-[11px] font-mono text-slate-700 font-semibold">
-                {incident.captured_at || incident.createdAt || incident.startTime || '2026-08-23 14:15:00'}
+                {incident.captured_at || incident.createdAt || incident.startTime || 'Not available'}
               </span>
             </div>
 
@@ -251,7 +258,7 @@ const IncidentDetailsPage = () => {
                 <div className="text-xl font-bold text-red-700">
                   {typeof incident.p99_latency_ms === 'number'
                     ? `${incident.p99_latency_ms.toLocaleString()} ms`
-                    : '4,105 ms'}
+                    : 'Not available'}
                 </div>
                 <div className="text-[11px] text-slate-500 mt-1 font-sans">Baseline: &lt; 250ms</div>
               </div>
@@ -261,7 +268,7 @@ const IncidentDetailsPage = () => {
                 <div className="text-xl font-bold text-amber-700">
                   {typeof incident.error_rate === 'number'
                     ? `${incident.error_rate}%`
-                    : '14.8%'}
+                    : 'Not available'}
                 </div>
                 <div className="text-[11px] text-slate-500 mt-1 font-sans">Baseline: &lt; 0.1%</div>
               </div>
@@ -297,7 +304,7 @@ const IncidentDetailsPage = () => {
                 <div className="text-lg font-bold text-slate-800">
                   {typeof liveServiceObj?.average_latency_ms === 'number'
                     ? `${liveServiceObj.average_latency_ms} ms`
-                    : '24 ms'}
+                    : 'Not available'}
                 </div>
                 <div className="text-[11px] text-slate-500 mt-0.5 font-sans">Real-time p95/avg measurement</div>
               </div>
@@ -307,7 +314,7 @@ const IncidentDetailsPage = () => {
                 <div className="text-lg font-bold text-slate-800">
                   {typeof liveServiceObj?.error_rate === 'number'
                     ? `${liveServiceObj.error_rate}%`
-                    : '0%'}
+                    : 'Not available'}
                 </div>
                 <div className="text-[11px] text-slate-500 mt-0.5 font-sans">HTTP 5xx rate over last 5m</div>
               </div>

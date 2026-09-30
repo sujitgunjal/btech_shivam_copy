@@ -1,13 +1,25 @@
 import api from './api';
-import {
-  incidentsListData,
-  getMockIncidentById,
-  getMockInvestigationResult,
-  getMockIncidentLogs,
-  getMockIncidentMetrics,
-  getMockIncidentTraces,
-  getMockIncidentDeployments,
-} from '../data/mockData';
+
+const INVESTIGATE_TIMEOUT_MS = 180000;
+const EVIDENCE_TIMEOUT_MS = 60000;
+
+function incidentPathId(id) {
+  if (id === null || id === undefined || id === '') {
+    throw new Error('Incident id is required.');
+  }
+  if (typeof id === 'number' && Number.isFinite(id)) {
+    return String(id);
+  }
+  const value = String(id).trim();
+  if (/^\d+$/.test(value)) return value;
+  return value;
+}
+
+function requestMatchesLiveIncident(requested, dbId, externalId) {
+  const req = String(requested).trim();
+  if (/^\d+$/.test(req)) return Number(req) === Number(dbId);
+  return req.toUpperCase() === String(externalId).toUpperCase();
+}
 
 /**
  * Fetch all incidents
@@ -36,8 +48,8 @@ export const getIncidents = async () => {
     startTime: inc.start_time
       ? inc.start_time.replace('T', ' ').substring(0, 19)
       : inc.startTime || '',
-    p99_latency_ms: inc.p99_latency_ms ?? (inc.external_id === 'INC-0001' || inc.id === 1 ? 4105.0 : null),
-    error_rate: inc.error_rate ?? (inc.external_id === 'INC-0001' || inc.id === 1 ? 14.8 : null),
+    p99_latency_ms: inc.p99_latency_ms ?? null,
+    error_rate: inc.error_rate ?? null,
     captured_at: inc.captured_at
       ? inc.captured_at.replace('T', ' ').substring(0, 19)
       : inc.start_time
@@ -53,67 +65,77 @@ export const getIncidents = async () => {
  * Endpoint: GET /incidents/:id
  */
 export const getIncidentById = async (id) => {
-  try {
-    const numericId =
-      typeof id === 'string' && id.startsWith('INC-')
-        ? parseInt(id.replace('INC-', ''), 10)
-        : id;
-    const response = await api.get(`/incidents/${numericId}`);
-    const inc = response.data;
-    const normalized = {
-      id:
-        inc.external_id ||
-        (typeof inc.id === 'number'
-          ? `INC-${String(inc.id).padStart(4, '0')}`
-          : inc.id),
-      db_id: inc.id,
-      title: inc.title || `Alert on ${inc.service}`,
-      service: inc.service || inc.affectedService || 'Order Service',
-      affectedService: inc.service || inc.affectedService || 'Order Service',
-      severity: inc.severity
-        ? inc.severity.charAt(0).toUpperCase() + inc.severity.slice(1)
-        : 'Critical',
-      status: inc.status
-        ? inc.status.charAt(0).toUpperCase() + inc.status.slice(1)
-        : 'Active',
-      createdAt: inc.start_time
-        ? inc.start_time.replace('T', ' ').substring(0, 19)
-        : inc.created_at || '',
-      startTime: inc.start_time
-        ? inc.start_time.replace('T', ' ').substring(0, 19)
-        : '',
-      p99_latency_ms: inc.p99_latency_ms ?? (inc.external_id === 'INC-0001' || inc.id === 1 ? 4105.0 : null),
-      error_rate: inc.error_rate ?? (inc.external_id === 'INC-0001' || inc.id === 1 ? 14.8 : null),
-      captured_at: inc.captured_at
-        ? inc.captured_at.replace('T', ' ').substring(0, 19)
-        : inc.start_time
-        ? inc.start_time.replace('T', ' ').substring(0, 19)
-        : inc.created_at || '',
-      description: inc.description || '',
-      environment: 'production-us-east',
-      reporter: 'Prometheus Alertmanager',
-      assignedTeam: 'Platform SRE Team',
-      timeline: [
-        {
-          time:
-            (inc.start_time || '').split('T')[1]?.substring(0, 8) || '14:15:02',
-          event: `Alert firing: Anomaly on ${inc.service}`,
-        },
-        {
-          time: '14:16:10',
-          event: 'PagerDuty incident created & assigned to SRE On-call',
-        },
-        { time: '14:18:45', event: 'Status updated by SRE Engineer' },
-      ],
-    };
-    return { data: normalized, isMock: false };
-  } catch (error) {
-    console.warn(
-      `[incidentService] GET /incidents/${id} failed. Falling back to mock data. Cause:`,
-      error.message
+  const requested = incidentPathId(id);
+  const response = await api.get(`/incidents/${encodeURIComponent(requested)}`);
+  const inc = response.data;
+  const externalId =
+    inc.external_id ||
+    (typeof inc.id === 'number'
+      ? `INC-${String(inc.id).padStart(4, '0')}`
+      : inc.id);
+  if (!requestMatchesLiveIncident(requested, inc.id, externalId)) {
+    throw new Error(
+      `${requested} is a historical scenario id, not live incident ${externalId}. Open the live incident from the incidents list. Historical ids such as INC-004 stay RAG context and are not opened as a different database record.`
     );
-    return { data: getMockIncidentById(id), isMock: true };
   }
+  const normalized = {
+    id: externalId,
+    db_id: inc.id,
+    title: inc.title || (inc.service ? `Alert on ${inc.service}` : 'Incident'),
+    service: inc.service || inc.affectedService || '',
+    affectedService: inc.service || inc.affectedService || '',
+    severity: inc.severity
+      ? inc.severity.charAt(0).toUpperCase() + inc.severity.slice(1)
+      : '',
+    status: inc.status
+      ? inc.status.charAt(0).toUpperCase() + inc.status.slice(1)
+      : '',
+    createdAt: inc.start_time
+      ? inc.start_time.replace('T', ' ').substring(0, 19)
+      : inc.created_at || '',
+    startTime: inc.start_time
+      ? inc.start_time.replace('T', ' ').substring(0, 19)
+      : '',
+    endTime: inc.end_time
+      ? String(inc.end_time).replace('T', ' ').substring(0, 19)
+      : '',
+    p99_latency_ms: inc.p99_latency_ms ?? null,
+    error_rate: inc.error_rate ?? null,
+    captured_at: inc.captured_at
+      ? inc.captured_at.replace('T', ' ').substring(0, 19)
+      : inc.start_time
+      ? inc.start_time.replace('T', ' ').substring(0, 19)
+      : inc.created_at || '',
+    description: inc.description || '',
+    environment: inc.environment || '',
+    reporter: inc.reporter || '',
+    assignedTeam: inc.assigned_team || inc.assignedTeam || '',
+    timeline: Array.isArray(inc.timeline) ? inc.timeline : [],
+  };
+  return { data: normalized, isMock: false };
+};
+
+/**
+ * Fetch unified telemetry evidence for an incident.
+ * Endpoint: GET /incidents/:id/evidence
+ */
+export const getIncidentEvidence = async (id) => {
+  const numericId = await resolveLiveDbId(id);
+  const response = await api.get(`/incidents/${numericId}/evidence`, {
+    timeout: EVIDENCE_TIMEOUT_MS,
+  });
+  const payload = response.data || {};
+  return {
+    data: {
+      incident_id: payload.incident_id,
+      service: payload.service,
+      time_window: payload.time_window || null,
+      logs: Array.isArray(payload.logs) ? payload.logs : [],
+      metrics: Array.isArray(payload.metrics) ? payload.metrics : [],
+      traces: Array.isArray(payload.traces) ? payload.traces : [],
+    },
+    isMock: false,
+  };
 };
 
 /**
@@ -121,71 +143,31 @@ export const getIncidentById = async (id) => {
  * Endpoint: GET /incidents/:id/evidence
  */
 export const getIncidentLogs = async (id) => {
-  try {
-    const numericId =
-      typeof id === 'string' && id.startsWith('INC-')
-        ? parseInt(id.replace('INC-', ''), 10)
-        : id;
-    const response = await api.get(`/incidents/${numericId}/evidence`);
-    return { data: response.data, isMock: false };
-  } catch (error) {
-    console.warn(
-      `[incidentService] GET /incidents/${id}/evidence failed. Falling back to mock logs. Cause:`,
-      error.message
-    );
-    return { data: getMockIncidentLogs(id), isMock: true };
-  }
+  const evidence = await getIncidentEvidence(id);
+  return { data: evidence.data.logs, isMock: false };
 };
 
 /**
  * Fetch metrics related to a specific incident
  */
 export const getIncidentMetrics = async (id) => {
-  try {
-    const numericId =
-      typeof id === 'string' && id.startsWith('INC-')
-        ? parseInt(id.replace('INC-', ''), 10)
-        : id;
-    const response = await api.get(`/incidents/${numericId}/evidence`);
-    return { data: response.data, isMock: false };
-  } catch (error) {
-    console.warn(
-      `[incidentService] GET /incidents/${id}/evidence failed. Falling back to mock metrics. Cause:`,
-      error.message
-    );
-    return { data: getMockIncidentMetrics(id), isMock: true };
-  }
+  const evidence = await getIncidentEvidence(id);
+  return { data: evidence.data.metrics, isMock: false };
 };
 
 /**
  * Fetch traces related to a specific incident
  */
 export const getIncidentTraces = async (id) => {
-  try {
-    const numericId =
-      typeof id === 'string' && id.startsWith('INC-')
-        ? parseInt(id.replace('INC-', ''), 10)
-        : id;
-    const response = await api.get(`/incidents/${numericId}/evidence`);
-    return { data: response.data, isMock: false };
-  } catch (error) {
-    console.warn(
-      `[incidentService] GET /incidents/${id}/evidence failed. Falling back to mock traces. Cause:`,
-      error.message
-    );
-    return { data: getMockIncidentTraces(id), isMock: true };
-  }
+  const evidence = await getIncidentEvidence(id);
+  return { data: evidence.data.traces, isMock: false };
 };
 
 /**
- * Fetch deployment history related to a specific incident
+ * Deployment history is not exposed by the backend.
  */
-export const getIncidentDeployments = async (id) => {
-  try {
-    return { data: getMockIncidentDeployments(id), isMock: true };
-  } catch (error) {
-    return { data: getMockIncidentDeployments(id), isMock: true };
-  }
+export const getIncidentDeployments = async () => {
+  throw new Error('Deployment history is not available from the backend.');
 };
 
 /**
@@ -224,21 +206,20 @@ export const createIncident = async (data) => {
  * Trigger operational investigation workflow for an incident
  * Endpoint: POST /incidents/:id/investigate
  */
-export const investigateIncident = async (id) => {
-  try {
-    const numericId =
-      typeof id === 'string' && id.startsWith('INC-')
-        ? parseInt(id.replace('INC-', ''), 10)
-        : id;
-    const response = await api.post(`/incidents/${numericId}/investigate`);
-    return { data: response.data, isMock: false };
-  } catch (error) {
-    console.warn(
-      `[incidentService] POST /incidents/${id}/investigate failed. Falling back to mock investigation. Cause:`,
-      error.message
-    );
-    return { data: getMockInvestigationResult(id), isMock: true };
+async function resolveLiveDbId(id) {
+  if (typeof id === 'number' || /^\d+$/.test(String(id).trim())) {
+    return String(id);
   }
+  const loaded = await getIncidentById(id);
+  return String(loaded.data.db_id);
+}
+
+export const investigateIncident = async (id) => {
+  const numericId = await resolveLiveDbId(id);
+  const response = await api.post(`/incidents/${numericId}/investigate`, null, {
+    timeout: INVESTIGATE_TIMEOUT_MS,
+  });
+  return { data: response.data, isMock: false };
 };
 
 /**
