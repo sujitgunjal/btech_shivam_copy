@@ -1,0 +1,33 @@
+[
+  {
+    "incident_id": "INC-006",
+    "db_id": 14,
+    "status": "completed",
+    "confidence": 0.9,
+    "evidence_count": 978,
+    "rca_valid": true,
+    "validation_issues": [],
+    "evaluation": {
+      "incident_id": "INC-006",
+      "incident_type": "bad_deployment",
+      "expected_service": "order-service",
+      "expected_root_cause": "The v1.3.0 deployment expected an available_stock field that is absent from the product-service response contract.",
+      "rca_produced": true,
+      "rca_root_cause": "The order-service is unable to parse or process the response received from the product-service (via dependency-proxy), despite the network request returning a 200 OK. This indicates a contract mismatch or a regression in the response handling logic introduced in a recent deployment.",
+      "rca_confidence": 0.9,
+      "rca_affected_services": [
+        "order-service"
+      ],
+      "service_match": true,
+      "keyword_matches": [
+        "deploy"
+      ],
+      "keyword_match_ratio": 0.2,
+      "historical_incidents_referenced": 1,
+      "historical_ids": [
+        "INC-006"
+      ]
+    },
+    "elapsed_seconds": 13.495126008987427
+  }
+]

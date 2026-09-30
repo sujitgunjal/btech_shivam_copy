@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -12,6 +12,35 @@ from ..models.investigation import Investigation
 from .telemetry_service import TelemetryService
 
 logger = logging.getLogger("incident-backend")
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _live_collection_window(
+    start_time: datetime,
+    end_time: datetime | None,
+) -> tuple[datetime, datetime]:
+    """Return a window that overlaps telemetry the running stack can contain.
+
+    Scenario files record the original experiment clock. A stack started later
+    has logs, metrics, and traces only for the current run, so an old window
+    comes back empty.
+    """
+    now = datetime.now(timezone.utc)
+    start_time = _as_utc(start_time)
+    end_time = _as_utc(end_time) if end_time is not None else now
+    if end_time < now - timedelta(hours=6):
+        logger.info(
+            "Incident window %s to %s is outside live telemetry; collecting the last 15 minutes",
+            start_time.isoformat(),
+            end_time.isoformat(),
+        )
+        return now - timedelta(minutes=15), now
+    return start_time, end_time
 
 
 class InvestigationService:
@@ -72,8 +101,10 @@ class InvestigationService:
         self.db.commit()
 
         # 4. Determine time window
-        start_time = incident.start_time
-        end_time = incident.end_time or datetime.now(timezone.utc)
+        start_time, end_time = _live_collection_window(
+            incident.start_time,
+            incident.end_time,
+        )
         service_name = incident.service
 
         # 5. Collect telemetry

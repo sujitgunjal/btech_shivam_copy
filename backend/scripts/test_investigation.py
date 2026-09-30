@@ -20,7 +20,7 @@ import argparse
 import json
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -65,15 +65,89 @@ def load_scenario(incident_id: str) -> dict:
         return json.load(f)
 
 
-def create_incident(client: httpx.Client, scenario: dict) -> dict:
-    """Create an incident via the API."""
+FAULT_HOLD_SECONDS = 70
+ORDER_URL = "http://localhost:8003/orders"
+
+
+def _load_simulators():
+    """Import the existing incident simulators from the project root."""
+    root = str(PROJECT_ROOT)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from incidents._common import (
+        clear_fault,
+        inject_fault,
+        recreate_order_service,
+        wait_for_http,
+    )
+
+    return inject_fault, clear_fault, recreate_order_service, wait_for_http
+
+
+def _post_order() -> None:
+    try:
+        httpx.post(
+            ORDER_URL,
+            json={"user_id": 1, "product_id": 1, "quantity": 1},
+            timeout=5.0,
+        )
+    except httpx.HTTPError:
+        return
+
+
+def generate_traffic(seconds: int) -> None:
+    """Send order requests so logs, metrics, and traces exist during the fault."""
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        _post_order()
+        time.sleep(1)
+
+
+def activate_fault(incident_id: str, scenario: dict):
+    """Inject the scenario fault and return a cleanup function.
+
+    INC-004 and INC-005 use the order-service fault API. INC-006 deploys the
+    known bad order-service version. Other incidents are not injected here.
+    """
+    if incident_id not in {"INC-004", "INC-005", "INC-006"}:
+        return None
+
+    inject_fault, clear_fault, recreate_order_service, wait_for_http = _load_simulators()
+    service = scenario["affected_service"]
+
+    if incident_id == "INC-004":
+        inject_fault(service, "cpu", workers=2, duration_seconds=FAULT_HOLD_SECONDS + 60)
+        return lambda: clear_fault(service)
+    if incident_id == "INC-005":
+        inject_fault(
+            service, "memory", megabytes=256, duration_seconds=FAULT_HOLD_SECONDS + 60
+        )
+        return lambda: clear_fault(service)
+
+    recreate_order_service(PROJECT_ROOT, "v1.3.0", "product_contract_regression")
+    wait_for_http("http://localhost:8003/health")
+
+    def restore_deployment() -> None:
+        recreate_order_service(PROJECT_ROOT, "v1.3.1", "none")
+        wait_for_http("http://localhost:8003/health")
+
+    return restore_deployment
+
+
+def create_incident(
+    client: httpx.Client,
+    scenario: dict,
+    start_time: datetime,
+    end_time: datetime,
+) -> dict:
+    """Create an incident for the exact window in which the fault was active."""
     payload = {
         "title": f"{scenario['type'].replace('_', ' ').title()} on {scenario['affected_service']}",
         "description": f"Simulated {scenario['type']} incident for testing.",
         "service": scenario["affected_service"],
         "severity": scenario.get("severity", "HIGH").lower(),
-        "start_time": scenario["start_time"],
-        "end_time": scenario.get("end_time"),
+        "start_time": start_time.isoformat(),
+        "end_time": end_time.isoformat(),
     }
     resp = client.post(f"{BACKEND_URL}/incidents", json=payload)
     resp.raise_for_status()
@@ -162,7 +236,7 @@ def evaluate_against_ground_truth(
         "high_latency": ["latency", "slow", "delay", "response time"],
         "cpu_spike": ["cpu", "processor", "utilization", "throttl"],
         "memory_spike": ["memory", "oom", "working set", "allocation"],
-        "bad_deployment": ["deploy", "version", "rollback", "release"],
+        "bad_deployment": ["deploy", "version", "rollback", "keyerror", "available_stock"],
         "network_failure": ["network", "timeout", "packet", "connectivity"],
     }
     keywords = type_keywords.get(scenario.get("type", ""), [])
@@ -200,36 +274,55 @@ def run_test(incident_id: str, dry_run: bool = False) -> dict:
             print(f"  ERROR: Cannot connect to backend at {BACKEND_URL}")
             return {"incident_id": incident_id, "error": "Backend unreachable"}
 
-        # Create incident
-        print(f"\n  Creating incident...")
+        cleanup = None
         try:
-            incident = create_incident(client, scenario)
-            db_id = incident["id"]
-            ext_id = incident["external_id"]
-            print(f"  Created: id={db_id} external_id={ext_id}")
-        except httpx.HTTPStatusError as e:
-            print(f"  ERROR creating incident: {e.response.status_code} {e.response.text}")
-            return {"incident_id": incident_id, "error": f"Create failed: {e}"}
+            print("\n  Injecting fault and generating telemetry...")
+            window_start = datetime.now(timezone.utc)
+            cleanup = activate_fault(incident_id, scenario)
+            if cleanup is None:
+                window_start = window_start - timedelta(minutes=15)
+                print("  No fault injector for this incident; using the last 15 minutes.")
+            else:
+                generate_traffic(FAULT_HOLD_SECONDS)
+            window_end = datetime.now(timezone.utc)
+            print(
+                f"  Telemetry window: {window_start.isoformat()} -> {window_end.isoformat()}"
+            )
 
-        if dry_run:
-            print(f"  DRY RUN — skipping investigation trigger")
-            return {"incident_id": incident_id, "status": "dry_run", "db_id": db_id}
+            print("\n  Creating incident...")
+            try:
+                incident = create_incident(client, scenario, window_start, window_end)
+                db_id = incident["id"]
+                ext_id = incident["external_id"]
+                print(f"  Created: id={db_id} external_id={ext_id}")
+            except httpx.HTTPStatusError as e:
+                print(f"  ERROR creating incident: {e.response.status_code} {e.response.text}")
+                return {"incident_id": incident_id, "error": f"Create failed: {e}"}
 
-        # Trigger investigation
-        print(f"\n  Triggering investigation (this may take a minute)...")
-        start = time.time()
-        try:
-            result = trigger_investigation(client, db_id)
-            elapsed = time.time() - start
-            print(f"  Investigation completed in {elapsed:.1f}s")
-        except httpx.HTTPStatusError as e:
-            print(f"  ERROR: {e.response.status_code} {e.response.text}")
-            return {"incident_id": incident_id, "error": f"Investigation failed: {e}"}
-        except httpx.ReadTimeout:
-            print(f"  ERROR: Investigation timed out after {TIMEOUT}s")
-            return {"incident_id": incident_id, "error": "Timeout"}
+            if dry_run:
+                print("  DRY RUN — skipping investigation trigger")
+                return {"incident_id": incident_id, "status": "dry_run", "db_id": db_id}
 
-        # Display results
+            print("\n  Triggering investigation (this may take a minute)...")
+            start = time.time()
+            try:
+                result = trigger_investigation(client, db_id)
+                elapsed = time.time() - start
+                print(f"  Investigation completed in {elapsed:.1f}s")
+            except httpx.HTTPStatusError as e:
+                print(f"  ERROR: {e.response.status_code} {e.response.text}")
+                return {"incident_id": incident_id, "error": f"Investigation failed: {e}"}
+            except httpx.ReadTimeout:
+                print(f"  ERROR: Investigation timed out after {TIMEOUT}s")
+                return {"incident_id": incident_id, "error": "Timeout"}
+        finally:
+            if cleanup is not None:
+                print("  Clearing injected fault...")
+                try:
+                    cleanup()
+                except Exception as exc:
+                    print(f"  WARNING: fault cleanup failed: {exc}")
+
         print(f"\n  Status:     {result.get('status', 'N/A')}")
         print(f"  Confidence: {result.get('confidence', 'N/A')}")
         print(f"  Evidence:   {result.get('evidence_count', 0)} items")
@@ -245,20 +338,18 @@ def run_test(incident_id: str, dry_run: bool = False) -> dict:
             if hist:
                 print(f"  History:    {[h.get('incident_id') for h in hist]}")
         else:
-            print(f"\n  No RCA report produced.")
+            print("\n  No RCA report produced.")
 
-        # Validate
         issues = validate_rca(report)
         if issues:
-            print(f"\n  Validation issues:")
+            print("\n  Validation issues:")
             for issue in issues:
                 print(f"    - {issue}")
         else:
-            print(f"\n  Validation: PASSED")
+            print("\n  Validation: PASSED")
 
-        # Evaluate against ground truth (post-investigation only)
         evaluation = evaluate_against_ground_truth(report, scenario, incident_id)
-        print(f"\n  Ground Truth Evaluation:")
+        print("\n  Ground Truth Evaluation:")
         print(f"    Service match:    {evaluation.get('service_match', False)}")
         print(f"    Keyword matches:  {evaluation.get('keyword_matches', [])}")
         print(f"    Match ratio:      {evaluation.get('keyword_match_ratio', 0.0):.0%}")

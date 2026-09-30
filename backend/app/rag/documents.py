@@ -103,41 +103,89 @@ def _format_logs(logs: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+METRIC_PRIORITY = (
+    "cpu_usage",
+    "memory_usage",
+    "error_rate",
+    "latency",
+    "request_latency",
+    "request_rate",
+)
+
+
+def _metric_value(entry: dict[str, Any]) -> float | None:
+    value = (entry.get("metadata") or {}).get("value")
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
 def _format_metrics(metrics: list[dict[str, Any]]) -> str:
-    """Format metric evidence entries into readable text."""
+    """Summarize metrics by signal, leading with resource and error peaks.
+
+    A raw dump of the earliest samples is mostly healthy request-rate points.
+    CPU, memory, and error peaks are the evidence an investigation needs.
+    """
     if not metrics:
         return ""
 
-    lines = [f"Metric observations ({len(metrics)} data points):"]
-    for entry in metrics[:MAX_METRIC_ENTRIES]:
-        ts = entry["timestamp"]
-        svc = entry["service"]
-        lines.append(f"  [{ts}] [{svc}] {entry['content']}")
-        meta = entry.get("metadata", {})
-        if meta:
-            detail_parts = []
-            for k, v in meta.items():
-                if k not in ("source",):
-                    detail_parts.append(f"{k}={v}")
-            if detail_parts:
-                lines.append(f"    Details: {', '.join(detail_parts)}")
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for entry in metrics:
+        grouped.setdefault(entry["event_type"], []).append(entry)
 
-    if len(metrics) > MAX_METRIC_ENTRIES:
-        lines.append(f"  ... and {len(metrics) - MAX_METRIC_ENTRIES} more data points")
+    order = [name for name in METRIC_PRIORITY if name in grouped]
+    order.extend(name for name in grouped if name not in order)
+
+    lines = [
+        f"Metric observations ({len(metrics)} data points, summarized by signal):"
+    ]
+    for name in order:
+        series = grouped[name]
+        valued = [
+            (entry, value)
+            for entry in series
+            if (value := _metric_value(entry)) is not None
+        ]
+        if not valued:
+            lines.append(f"  {name}: {len(series)} samples, no numeric values")
+            continue
+
+        low = min(value for _, value in valued)
+        peak_entry, peak = max(valued, key=lambda item: item[1])
+        lines.append(
+            f"  {name} service={peak_entry['service']} samples={len(valued)} "
+            f"min={low:.4f} max={peak:.4f} peak_at={peak_entry['timestamp']} "
+            f"peak_severity={peak_entry['severity']}"
+        )
+        for entry, _value in sorted(valued, key=lambda item: item[1], reverse=True)[:3]:
+            lines.append(
+                f"    [{entry['timestamp']}] [{entry['service']}] "
+                f"{entry['severity']} {entry['content']}"
+            )
 
     return "\n".join(lines)
 
 
 def _format_traces(traces: list[dict[str, Any]]) -> str:
-    """Format trace evidence entries into readable text."""
+    """Show failed and slow spans before ordinary successful spans."""
     if not traces:
         return ""
 
-    lines = [f"Trace spans ({len(traces)} spans):"]
-    for entry in traces[:MAX_TRACE_ENTRIES]:
+    def rank(entry: dict[str, Any]) -> tuple[int, float]:
+        failed = 0 if entry["severity"] in ("error", "critical") else 1
+        duration = float((entry.get("metadata") or {}).get("duration_ms") or 0)
+        return (failed, -duration)
+
+    ordered = sorted(traces, key=rank)
+    error_count = sum(1 for entry in traces if entry["severity"] in ("error", "critical"))
+    lines = [
+        f"Trace spans ({len(traces)} spans, {error_count} errors; "
+        "failed and slowest spans first):"
+    ]
+    for entry in ordered[:MAX_TRACE_ENTRIES]:
         ts = entry["timestamp"]
         svc = entry["service"]
-        lines.append(f"  [{ts}] [{svc}] {entry['event_type']}: {entry['content']}")
+        lines.append(f"  [{ts}] [{svc}] {entry['severity']} {entry['content']}")
         meta = entry.get("metadata", {})
         if meta.get("trace_id"):
             lines.append(f"    trace_id={meta['trace_id']}")

@@ -16,6 +16,11 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://postgres:1235@postgres:5432/devops_db
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      # The services export with the gRPC OTLP client. FastAPI's own
+      # telemetry would otherwise send HTTP to this same gRPC port.
+      OTEL_TRACES_EXPORTER: none
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
       DEPLOYMENT_ENVIRONMENT: development
 
     depends_on:
@@ -44,6 +49,11 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://postgres:1235@postgres:5432/devops_db
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      # The services export with the gRPC OTLP client. FastAPI's own
+      # telemetry would otherwise send HTTP to this same gRPC port.
+      OTEL_TRACES_EXPORTER: none
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
       DEPLOYMENT_ENVIRONMENT: development
 
     depends_on:
@@ -78,6 +88,12 @@ services:
       PRODUCT_SERVICE_URL: http://dependency-proxy:9000
 
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+
+      OTEL_TRACES_EXPORTER: none
+
+      OTEL_METRICS_EXPORTER: none
+
+      OTEL_LOGS_EXPORTER: none
 
       DEPLOYMENT_ENVIRONMENT: development
 
