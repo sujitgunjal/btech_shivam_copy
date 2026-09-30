@@ -10,6 +10,7 @@ from ..database import get_db
 from ..schemas.evidence import EvidenceResponse, UnifiedEvidenceResponse
 from ..schemas.incident import (
     IncidentCreate,
+    IncidentDeleteAllResponse,
     IncidentListResponse,
     IncidentResponse,
     IncidentUpdate,
@@ -51,6 +52,15 @@ def list_incidents(
     svc = IncidentService(db)
     incidents = svc.list_incidents(status=status, service=service, severity=severity)
     return IncidentListResponse(incidents=incidents, total=len(incidents))
+
+
+@router.delete("", response_model=IncidentDeleteAllResponse)
+def delete_all_incidents(db: Session = Depends(get_db)):
+    """Delete every stored incident, including investigations and evidence."""
+    svc = IncidentService(db)
+    deleted = svc.delete_all()
+    logger.info("All incidents deleted count=%s", deleted)
+    return IncidentDeleteAllResponse(deleted=deleted)
 
 
 @router.get("/{incident_id}", response_model=IncidentResponse)

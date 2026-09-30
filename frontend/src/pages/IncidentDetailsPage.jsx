@@ -17,8 +17,43 @@ import {
 import SeverityBadge from '../components/SeverityBadge';
 import StatusBadge from '../components/StatusBadge';
 import DemoDataBadge from '../components/DemoDataBadge';
-import { getIncidentById } from '../services/incidentService';
+import { getIncidentById, getIncidentEvidence } from '../services/incidentService';
 import { getServices } from '../services/serviceService';
+
+function finiteNumbers(metrics, names) {
+  return (metrics || [])
+    .filter((metric) => names.includes(metric.metric_name))
+    .map((metric) => Number(metric.value))
+    .filter((value) => Number.isFinite(value));
+}
+
+function percentile(values, p) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[index];
+}
+
+function detectionFromEvidence(evidence) {
+  const metrics = evidence?.metrics || [];
+  const latencySeconds = percentile(finiteNumbers(metrics, ['latency', 'request_latency']), 99);
+  const errorRates = finiteNumbers(metrics, ['error_rate']);
+  const requestRates = finiteNumbers(metrics, ['request_rate']);
+  const errorSum = errorRates.reduce((sum, value) => sum + value, 0);
+  const requestSum = requestRates.reduce((sum, value) => sum + value, 0);
+
+  let errorRatePct = null;
+  if (requestSum > 0) {
+    errorRatePct = (errorSum / requestSum) * 100;
+  } else if (errorRates.length > 0 && errorSum === 0) {
+    errorRatePct = 0;
+  }
+
+  return {
+    latencyMs: latencySeconds === null ? null : latencySeconds * 1000,
+    errorRatePct,
+  };
+}
 
 const IncidentDetailsPage = () => {
   const { id } = useParams();
@@ -26,6 +61,7 @@ const IncidentDetailsPage = () => {
 
   const [incident, setIncident] = useState(null);
   const [liveServices, setLiveServices] = useState([]);
+  const [detection, setDetection] = useState({ latencyMs: null, errorRatePct: null });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isMock, setIsMock] = useState(false);
@@ -42,6 +78,15 @@ const IncidentDetailsPage = () => {
       setIncident(incidentRes.data || null);
       setLiveServices(servicesRes.data || []);
       setIsMock(Boolean(incidentRes.isMock || servicesRes.isMock));
+
+      const evidenceId = incidentRes.data?.db_id ?? targetId;
+      try {
+        const evidenceRes = await getIncidentEvidence(evidenceId);
+        setDetection(detectionFromEvidence(evidenceRes.data));
+      } catch (evidenceErr) {
+        console.error('[IncidentDetailsPage] Error loading detection telemetry:', evidenceErr);
+        setDetection({ latencyMs: null, errorRatePct: null });
+      }
     } catch (err) {
       console.error('[IncidentDetailsPage] Error fetching incident details:', err);
       const detail = err?.response?.data?.detail;
@@ -256,7 +301,9 @@ const IncidentDetailsPage = () => {
               <div className="p-3 bg-red-50/70 rounded-lg border border-red-200">
                 <div className="text-slate-600 mb-1 font-sans text-[11px] font-medium">P99 Latency at Detection</div>
                 <div className="text-xl font-bold text-red-700">
-                  {typeof incident.p99_latency_ms === 'number'
+                  {typeof detection.latencyMs === 'number'
+                    ? `${Math.round(detection.latencyMs).toLocaleString()} ms`
+                    : typeof incident.p99_latency_ms === 'number'
                     ? `${incident.p99_latency_ms.toLocaleString()} ms`
                     : 'Not available'}
                 </div>
@@ -266,7 +313,9 @@ const IncidentDetailsPage = () => {
               <div className="p-3 bg-amber-50/70 rounded-lg border border-amber-200">
                 <div className="text-slate-600 mb-1 font-sans text-[11px] font-medium">HTTP 5xx Error Rate at Detection</div>
                 <div className="text-xl font-bold text-amber-700">
-                  {typeof incident.error_rate === 'number'
+                  {typeof detection.errorRatePct === 'number'
+                    ? `${detection.errorRatePct.toFixed(2)}%`
+                    : typeof incident.error_rate === 'number'
                     ? `${incident.error_rate}%`
                     : 'Not available'}
                 </div>

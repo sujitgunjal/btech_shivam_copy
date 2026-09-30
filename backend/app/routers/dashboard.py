@@ -171,6 +171,7 @@ async def get_services_telemetry():
                 status=status,
                 requests_per_minute=final_rpm,
                 average_latency_ms=final_lat,
+                error_rate=final_err,
             )
         )
 

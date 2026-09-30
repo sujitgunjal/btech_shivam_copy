@@ -1,33 +1,33 @@
 [
   {
-    "incident_id": "INC-006",
-    "db_id": 14,
+    "incident_id": "INC-004",
+    "db_id": 27,
     "status": "completed",
-    "confidence": 0.9,
-    "evidence_count": 978,
+    "confidence": 1.0,
+    "evidence_count": 637,
     "rca_valid": true,
     "validation_issues": [],
     "evaluation": {
-      "incident_id": "INC-006",
-      "incident_type": "bad_deployment",
+      "incident_id": "INC-004",
+      "incident_type": "cpu_spike",
       "expected_service": "order-service",
-      "expected_root_cause": "The v1.3.0 deployment expected an available_stock field that is absent from the product-service response contract.",
+      "expected_root_cause": "A bounded CPU burn workload saturated the order-service container.",
       "rca_produced": true,
-      "rca_root_cause": "The order-service is unable to parse or process the response received from the product-service (via dependency-proxy), despite the network request returning a 200 OK. This indicates a contract mismatch or a regression in the response handling logic introduced in a recent deployment.",
-      "rca_confidence": 0.9,
+      "rca_root_cause": "An intentional CPU fault was injected into the order-service, causing worker threads to saturate the CPU.",
+      "rca_confidence": 1.0,
       "rca_affected_services": [
         "order-service"
       ],
       "service_match": true,
       "keyword_matches": [
-        "deploy"
+        "cpu"
       ],
-      "keyword_match_ratio": 0.2,
+      "keyword_match_ratio": 0.25,
       "historical_incidents_referenced": 1,
       "historical_ids": [
-        "INC-006"
+        "INC-004"
       ]
     },
-    "elapsed_seconds": 13.495126008987427
+    "elapsed_seconds": 10.882656574249268
   }
 ]

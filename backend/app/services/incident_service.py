@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..models.evidence import Evidence
 from ..models.incident import Incident
+from ..models.investigation import Investigation
 from ..schemas.incident import IncidentCreate, IncidentUpdate
 
 logger = logging.getLogger("incident-backend")
@@ -137,6 +138,16 @@ class IncidentService:
         self.db.commit()
         self.db.refresh(incident)
         return incident
+
+    def delete_all(self) -> int:
+        """Delete every incident and its stored investigations and evidence."""
+        count = self.db.query(Incident).count()
+        self.db.query(Evidence).delete(synchronize_session=False)
+        self.db.query(Investigation).delete(synchronize_session=False)
+        self.db.query(Incident).delete(synchronize_session=False)
+        self.db.commit()
+        logger.info("Deleted all incidents count=%d", count)
+        return count
 
     def get_evidence(self, incident_id: int) -> list[Evidence]:
         """Get all evidence for an incident."""

@@ -14,6 +14,6 @@
     {"phase": "symptoms", "event": "Order latency rises while successful responses and unrelated dependency traffic continue."},
     {"phase": "recovery", "event": "Remove the tc qdisc and confirm latency and traces recover."}
   ],
-  "severity": "MEDIUM",
+  "severity": "MEDIUM", 
   "simulator": "simulate.py"
 }

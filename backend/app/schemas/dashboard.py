@@ -21,6 +21,11 @@ class ServiceHealthItem(BaseModel):
         ge=0.0,
         description="Average request latency in milliseconds for this service",
     )
+    error_rate: float = Field(
+        0.0,
+        ge=0.0,
+        description="HTTP 5xx error percentage over the recent window",
+    )
 
 
 class ServicesListResponse(BaseModel):

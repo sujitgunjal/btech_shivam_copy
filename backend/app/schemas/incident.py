@@ -62,3 +62,9 @@ class IncidentListResponse(BaseModel):
 
     incidents: list[IncidentResponse]
     total: int
+
+
+class IncidentDeleteAllResponse(BaseModel):
+    """Schema for deleting every stored incident."""
+
+    deleted: int

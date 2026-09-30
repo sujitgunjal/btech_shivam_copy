@@ -61,6 +61,15 @@ export const getIncidents = async () => {
 };
 
 /**
+ * Delete every stored incident, including investigations and evidence.
+ * Endpoint: DELETE /incidents
+ */
+export const deleteAllIncidents = async () => {
+  const response = await api.delete('/incidents');
+  return { data: response.data, isMock: false };
+};
+
+/**
  * Fetch incident details by ID
  * Endpoint: GET /incidents/:id
  */

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { AlertTriangle, Loader2, AlertCircle, RefreshCw, Inbox } from 'lucide-react';
+import { AlertTriangle, Loader2, AlertCircle, RefreshCw, Inbox, Trash2 } from 'lucide-react';
 import IncidentFilters from '../components/IncidentFilters';
 import IncidentTable from '../components/IncidentTable';
 import DemoDataBadge from '../components/DemoDataBadge';
-import { getIncidents } from '../services/incidentService';
+import { deleteAllIncidents, getIncidents } from '../services/incidentService';
 
 /**
  * IncidentsPage Component - Searchable and filterable table of system incidents
@@ -14,6 +14,7 @@ const IncidentsPage = () => {
   const [error, setError] = useState(null);
   const [isMock, setIsMock] = useState(false);
 
+  const [deleting, setDeleting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSeverity, setSelectedSeverity] = useState('ALL');
   const [selectedStatus, setSelectedStatus] = useState('ALL');
@@ -68,6 +69,27 @@ const IncidentsPage = () => {
     setSelectedStatus('ALL');
   };
 
+  const handleEraseAll = async () => {
+    if (deleting || incidents.length === 0) return;
+    const confirmed = window.confirm(
+      'Erase every stored incident, including saved investigations and evidence? This cannot be undone.'
+    );
+    if (!confirmed) return;
+
+    setDeleting(true);
+    setError(null);
+    try {
+      await deleteAllIncidents();
+      setIncidents([]);
+    } catch (err) {
+      console.error('[IncidentsPage] Error deleting incidents:', err);
+      const detail = err?.response?.data?.detail;
+      setError(typeof detail === 'string' ? detail : err?.message || 'Failed to erase incidents.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -85,14 +107,28 @@ const IncidentsPage = () => {
           </p>
         </div>
 
-        <button
-          onClick={fetchIncidentsData}
-          disabled={loading}
-          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all shadow-xs flex items-center gap-1.5 self-start sm:self-auto disabled:opacity-50"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 text-slate-500 ${loading ? 'animate-spin' : ''}`} />
-          <span>Refresh</span>
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <button
+            onClick={handleEraseAll}
+            disabled={loading || deleting || incidents.length === 0}
+            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-red-200 text-red-700 hover:bg-red-50 transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+          >
+            {deleting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
+            <span>{deleting ? 'Erasing...' : 'Erase all'}</span>
+          </button>
+          <button
+            onClick={fetchIncidentsData}
+            disabled={loading || deleting}
+            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 text-slate-500 ${loading ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
+          </button>
+        </div>
       </div>
 
       {/* Error State Banner */}
